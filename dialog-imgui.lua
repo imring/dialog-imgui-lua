@@ -1,3 +1,5 @@
+script_author('imring')
+script_version_number(2.0)
 local ffi = require 'ffi'
 local memory = require 'memory'
 local imgui = require 'imgui'
@@ -5,6 +7,7 @@ local encoding = require 'encoding'
 encoding.default = 'CP1251'
 local u8 = encoding.UTF8
 local keys = require 'vkeys'
+local inicfg = require 'inicfg'
 
 ffi.cdef[[
 typedef void *PVOID;
@@ -26,6 +29,10 @@ local ignore = {}
 local columns = {}
 local maxwidth = -1
 local maxheight = -1
+local dialogs = {}
+local is_focused = false
+
+local ini = inicfg.load(nil, '..\\dialogimgui.ini')
 
 local function GET_POINTER(cdata) return tonumber(ffi.cast('uintptr_t', ffi.cast('PVOID', cdata))) end
 
@@ -110,6 +117,16 @@ local function enableDialog(bool)
 	sampToggleCursor(bool)
 end
 
+-- попытка фикса
+local function replace_t(str)
+	while str:find('\t') do
+		local space = 4
+		local a = space - (#(str:gsub('\t', '')) % space)
+		str = str:gsub('\t', (' '):rep(a), 1)
+	end
+	return str
+end
+
 local function cmdhook(this, id, style, caption, text, button1, button2, send)
 	returnFunc(hook_addr, inf_addr, true)
 	call_addr(this, id, style, caption, text, button1, button2, send)
@@ -117,13 +134,21 @@ local function cmdhook(this, id, style, caption, text, button1, button2, send)
 	caption, text, button1 = ffi.string(caption), ffi.string(text), ffi.string(button1)
 	if GET_POINTER(button2) ~= 0 then button2 = ffi.string(button2) else button2 = nil end
 	if not caption:find('%S+') and not text:find('%S+') and not button1:find('%S+') then return end
-	dialoginfo = { id, style, caption, text:gsub('\n\n', '\n \n'):gsub('\t\t', '\t'), button1, button2, 0 }
-	while dialoginfo[4]:find('\t\t') do dialoginfo[4] = dialoginfo[4]:gsub('\t\t', '\t') end
+	dialoginfo = { id, style, caption, text:gsub('\n\n', '\n \n'), button1, button2, 0 }
+	if dialoginfo[2] == 4 or dialoginfo[2] == 5 then
+		while dialoginfo[4]:find('\t\t') do dialoginfo[4] = dialoginfo[4]:gsub('\t\t', '\t') end
+	end
 	dclist = false
+	is_focused = false
 	maxwidth, maxheight = -1, -1
 	imgui.Process = true
-	input_dialog.v = ''
-	list_dialog = 0
+	if dialogs[id] and ini.main.save then
+		input_dialog.v = u8(dialogs[id][2])
+		list_dialog = dialogs[id][1]
+	else
+		input_dialog.v = ''
+		list_dialog = 0
+	end
 	enableDialog(false)
 end
 
@@ -235,6 +260,7 @@ local function run_button(bool)
 	sampSetCurrentDialogListItem(list_dialog)
 	sampCloseCurrentDialogWithButton(bool and 1 or 0)
 	imgui.Process = false
+	dialogs[dialoginfo[1]] = { list_dialog, u8:decode(input_dialog.v) }
 end
 
 local function isKeyCheckAvailable()
@@ -261,7 +287,13 @@ function main()
 	ffi.copy(inf_addr, ffi.cast('void*', hook_addr), 6)
 	call_addr = ffi.cast('HOOK_DIALOG', hook_addr)
 	returnFunc(hook_addr, detour_addr, false)
-	wait(-1)
+	while true do wait(0)
+		if wasKeyPressed(ini.main.hide) and ini.main.hider and imgui.Process then
+			imgui.Process = false
+		elseif wasKeyPressed(ini.main.show) and ini.main.hider and #dialoginfo > 0 then
+			imgui.Process = true
+		end
+	end
 end
 
 function onScriptTerminate(scr)
@@ -276,7 +308,7 @@ function imgui.BeforeDrawFrame()
 		fontChanged = true
 		local glyph_ranges = imgui.GetIO().Fonts:GetGlyphRangesCyrillic()
 		imgui.GetIO().Fonts:Clear()
-		imgui.GetIO().Fonts:AddFontFromFileTTF(getFolderPath(0x14) .. '\\arialbd.ttf', math.floor(getScreenResolution() / 113), nil, glyph_ranges)
+		imgui.GetIO().Fonts:AddFontFromFileTTF(getFolderPath(0x14) .. '\\arialbd.ttf', math.floor(getScreenResolution() / 113), nil, glyph_ranges) -- cour.ttf
 		imgui.RebuildFonts()
 	end
 end
@@ -320,7 +352,7 @@ function imgui.OnDrawFrame()
 				maxheight = maxheight + 4 * i + 12
 			end
 		end
-		maxheight = maxheight + style.ItemSpacing.y + ( imgui.GetFontSize() + 5 ) * 3 + 10
+		maxheight = maxheight + style.ItemSpacing.y + ( imgui.GetFontSize() + 5 ) * 3 + 15
 		maxwidth = maxwidth + 22
 		if maxwidth < 350 then maxwidth = 350 elseif maxwidth > x / 1.5 then maxwidth = math.floor(x / 1.5) end
 		if maxheight < 150 then maxheight = 150 elseif maxheight > y / 1.5 then maxheight = math.floor(y / 1.5) end
@@ -342,6 +374,9 @@ function imgui.OnDrawFrame()
 	imgui.SetCursorPosY(imgui.GetCursorPosY() + 5)
 	imgui.Separator()
 	imgui.SetCursorPosY(imgui.GetCursorPosY() + 5)
+
+	-- info
+	imgui.BeginChild('##info', imgui.ImVec2(maxwidth, maxheight - ( imgui.GetFontSize() + 5 ) * 4))
 	if dialoginfo[2] == 2 then
 		local i = -1
 		for w in dialoginfo[4]:gmatch('[^\r\n]+') do
@@ -355,7 +390,7 @@ function imgui.OnDrawFrame()
 		end
 		dialoginfo[8] = i
 	elseif dialoginfo[2] == 4 or dialoginfo[2] == 5 then
-		imgui.SetCursorPosY(imgui.GetCursorPosY() - 5)
+		imgui.SetCursorPosY(imgui.GetCursorPosY() - 3)
 		local info = dialoginfo[4]:gsub('\t\t', '\t \t')
 		local a = info:match('^(.-)\n')
 		local _, c = a:gsub('\t', '')
@@ -398,8 +433,13 @@ function imgui.OnDrawFrame()
 	if dialoginfo[2] == 1 or dialoginfo[2] == 3 then
 		imgui.PushItemWidth(sw - 15)
 		imgui.InputText('##input', input_dialog, dialoginfo[2] == 3 and imgui.InputTextFlags.Password or 0)
+		if not is_focused then
+			imgui.SetKeyboardFocusHere()
+			is_focused = true
+		end
 		imgui.PopItemWidth()
 	end
+	imgui.EndChild()
 
 	-- button
 	if sy == 150 then imgui.SetCursorPosY(sy - 30) end
@@ -440,11 +480,9 @@ function onWindowMessage(msg, wparam, lparam)
 				end
 			end
 		end
-
-	-- попытка фикса
-	elseif msg == 0x102 then
-		if wparam == keys.VK_SHIFT and isKeyCheckAvailable() then
-			consumeWindowMessage(true, false)
-		end
 	end
+end
+
+function onSendRpc(id, bs)
+	if id == 128 then return false end
 end
