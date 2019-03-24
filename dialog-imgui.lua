@@ -23,6 +23,9 @@ local input_dialog = imgui.ImBuffer(0xFFFF)
 local list_dialog = 0
 local dclist = false
 local ignore = {}
+local columns = {}
+local maxwidth = -1
+local maxheight = -1
 
 local function GET_POINTER(cdata) return tonumber(ffi.cast('uintptr_t', ffi.cast('PVOID', cdata))) end
 
@@ -113,8 +116,10 @@ local function cmdhook(this, id, style, caption, text, button1, button2, send)
 	returnFunc(hook_addr, detour_addr, false)
 	caption, text, button1 = ffi.string(caption), ffi.string(text), ffi.string(button1)
 	if GET_POINTER(button2) ~= 0 then button2 = ffi.string(button2) else button2 = nil end
-	dialoginfo = { id, style, caption, text, button1, button2, 0 }
+	if not caption:find('%S+') and not text:find('%S+') and not button1:find('%S+') then return end
+	dialoginfo = { id, style, caption, text:gsub('\n\n', '\n \n'):gsub('\t\t', '\t'), button1, button2, 0 }
 	dclist = false
+	maxwidth, maxheight = -1, -1
 	imgui.Process = true
 	input_dialog.v = ''
 	list_dialog = 0
@@ -230,6 +235,18 @@ local function run_button(bool)
 	imgui.Process = false
 end
 
+local function isKeyCheckAvailable()
+	if not isSampfuncsLoaded() then
+		return not isPauseMenuActive()
+	end
+	local result = not isSampfuncsConsoleActive() and not isPauseMenuActive()
+	if isSampLoaded() and isSampAvailable() then
+		result = result and not sampIsChatInputActive() and not sampIsDialogActive()
+	end
+	return result
+end
+  
+
 function main()
 	if not isSampLoaded() then return end
 
@@ -256,30 +273,67 @@ function imgui.BeforeDrawFrame()
 	if not fontChanged then
 		fontChanged = true
 		local glyph_ranges = imgui.GetIO().Fonts:GetGlyphRangesCyrillic()
-        imgui.GetIO().Fonts:Clear()
-		imgui.GetIO().Fonts:AddFontFromFileTTF(getFolderPath(0x14) .. '\\arialbd.ttf', 12, nil, glyph_ranges)
+		imgui.GetIO().Fonts:Clear()
+		imgui.GetIO().Fonts:AddFontFromFileTTF(getFolderPath(0x14) .. '\\arialbd.ttf', math.floor(getScreenResolution() / 113), nil, glyph_ranges)
 		imgui.RebuildFonts()
 	end
 end
 
 apply_custom_style()
 function imgui.OnDrawFrame()
+	-- size
 	local x, y = getScreenResolution()
-	imgui.SetNextWindowPos(imgui.ImVec2(x/2, y/2), imgui.Cond.FirstUseEver, imgui.ImVec2(0.5, 0.5))
+	if maxwidth == -1 and maxheight == -1 then
+		local title = dialoginfo[3]:gsub('{%x%x%x%x%x%x}', '')
+		maxwidth = imgui.CalcTextSize(u8(title)).x
+		if dialoginfo[2] == 4 or dialoginfo[2] == 5 then
+			local i = 0
+			for w in dialoginfo[4]:gmatch('[^\r\n]+') do
+				i = i + 1
+				local l = 0
+				w = w:gsub('{%x%x%x%x%x%x}', '')
+				local size = imgui.CalcTextSize(u8(w))
+				for m in w:gmatch('[^\t]+') do
+					l = l + 1
+					if not columns[l] then columns[l] = 0 end
+					local size = imgui.CalcTextSize(u8(m))
+					if columns[l] < size.x then columns[l] = size.x + 15 end
+				end
+				maxheight = maxheight + size.y + style.ItemSpacing.y
+			end
+			for i = 1, #columns do maxwidth = maxwidth + columns[i] end
+			maxheight = maxheight + 4 * i + 12
+		else
+			local i = 0
+			for w in dialoginfo[4]:gmatch('[^\r\n]+') do
+				w = w:gsub('{%x%x%x%x%x%x}', '')
+				i = i + 1
+				local size = imgui.CalcTextSize(u8(w))
+				if maxwidth < size.x then maxwidth = size.x end
+				maxheight = maxheight + size.y + style.ItemSpacing.y
+			end
+			if dialoginfo[2] == 1 or dialoginfo[2] == 3 then
+				maxheight = maxheight + imgui.GetFontSize() + 10
+			elseif dialoginfo[2] == 2 then
+				maxheight = maxheight + 4 * i + 12
+			end
+		end
+		maxheight = maxheight + style.ItemSpacing.y + ( imgui.GetFontSize() + 5 ) * 3 + 10
+		maxwidth = maxwidth + 22
+		if maxwidth < 350 then maxwidth = 350 elseif maxwidth > x / 1.5 then maxwidth = math.floor(x / 1.5) end
+		if maxheight < 150 then maxheight = 150 elseif maxheight > y / 1.5 then maxheight = math.floor(y / 1.5) end
+	end
+
+	imgui.SetNextWindowPos(imgui.ImVec2(x/2, y/2), imgui.Cond.Appearing, imgui.ImVec2(0.5, 0.5))
+	imgui.SetNextWindowSize(imgui.ImVec2(maxwidth, maxheight), imgui.Cond.Appearing)
 	imgui.Begin(u8(dialoginfo[3]), nil, imgui.WindowFlags.NoResize + imgui.WindowFlags.NoTitleBar --[[+ imgui.WindowFlags.HorizontalScrollbar]])
 	local sw, sy = imgui.GetWindowWidth(), imgui.GetWindowHeight()
-	if dialoginfo[7] == 1 and not ignore[dialoginfo[1]] then 
-		if sw < 350 then sw = 350 elseif sw > x / 1.5 then sw = math.floor(x / 1.5) end
-		if sy < 150 then sy = 150 elseif sy > y / 1.5 then sy = math.floor(y / 1.5) end
-		imgui.SetWindowSize(imgui.ImVec2(sw, sy))
-		imgui.SetWindowPos(imgui.ImVec2((x - sw) / 2, (y - sy) / 2))
-		dialoginfo[7] = 2
-		ignore[dialoginfo[1]] = true
-	elseif dialoginfo[7] == 0 then dialoginfo[7] = 1 end
+	
+	-- header
 	local cursor = imgui.GetCursorScreenPos()
 	cursor.x = cursor.x - 4
 	cursor.y = cursor.y - 3
-	imgui.GetWindowDrawList():AddRectFilled(cursor, imgui.ImVec2(cursor.x + imgui.GetWindowWidth() - 9, cursor.y + imgui.GetFontSize() + 5), 
+	imgui.GetWindowDrawList():AddRectFilled(cursor, imgui.ImVec2(cursor.x + sw - 9, cursor.y + imgui.GetFontSize() + 5), 
 		imgui.ColorConvertFloat4ToU32(colors[clr.TitleBgActive]))
 	imgui.SetCursorPos(imgui.ImVec2(imgui.GetCursorPosX() + 2, imgui.GetCursorPosY() - 1))
 	imguiTextColoredRGB(dialoginfo[3])
@@ -300,12 +354,13 @@ function imgui.OnDrawFrame()
 		dialoginfo[8] = i
 	elseif dialoginfo[2] == 4 or dialoginfo[2] == 5 then
 		imgui.SetCursorPosY(imgui.GetCursorPosY() - 5)
-		local info = dialoginfo[4]
+		local info = dialoginfo[4]:gsub('\t\t', '\t \t')
 		local a = info:match('^(.-)\n')
 		local _, c = a:gsub('\t', '')
 		if dialoginfo[2] == 5 then
 			info = info:match('^.-\n(.*)')
 			imgui.Columns(c + 1)
+			for i = 1, #columns do imgui.SetColumnWidth(i - 1, columns[i]) end
 			for w in a:gmatch('[^\t]+') do
 				imguiTextColoredRGB(w)
 				imgui.NextColumn()
@@ -361,13 +416,13 @@ end
 
 function onWindowMessage(msg, wparam, lparam)
 	if msg == 0x100 or msg == 0x101 then
-		if wparam == keys.VK_ESCAPE and imgui.Process and not isPauseMenuActive() then
+		if wparam == keys.VK_ESCAPE and imgui.Process and isKeyCheckAvailable() then
 			consumeWindowMessage(true, false)
 			if msg == 0x101 then run_button(false) end
-		elseif wparam == keys.VK_RETURN and imgui.Process and not isPauseMenuActive() then
+		elseif wparam == keys.VK_RETURN and imgui.Process and isKeyCheckAvailable() then
 			consumeWindowMessage(true, false)
 			if msg == 0x101 then run_button(true) end
-		elseif ( wparam == keys.VK_UP or keys.VK_DOWN ) and imgui.Process and not isPauseMenuActive() and ( dialoginfo[2] == 2 or dialoginfo[2] == 4 or dialoginfo[2] == 5 ) then
+		elseif ( wparam == keys.VK_UP or keys.VK_DOWN ) and imgui.Process and isKeyCheckAvailable() and ( dialoginfo[2] == 2 or dialoginfo[2] == 4 or dialoginfo[2] == 5 ) then
 			if msg == 0x100 then
 				consumeWindowMessage(true, false)
 				if wparam == keys.VK_DOWN then
@@ -380,6 +435,10 @@ function onWindowMessage(msg, wparam, lparam)
 					--[[else list_dialog = dialoginfo[8]] end
 				end
 			end
+		end
+	elseif msg == 0x102 then
+		if wparam == keys.VK_SHIFT and isKeyCheckAvailable() then
+			consumeWindowMessage(true, false)
 		end
 	end
 end
