@@ -436,6 +436,8 @@ function onWindowMessage(msg, wparam, lparam)
 				end
 			end
 		end
+
+	-- попытка фикса
 	elseif msg == 0x102 then
 		if wparam == keys.VK_SHIFT and isKeyCheckAvailable() then
 			consumeWindowMessage(true, false)
