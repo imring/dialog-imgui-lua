@@ -118,6 +118,7 @@ local function cmdhook(this, id, style, caption, text, button1, button2, send)
 	if GET_POINTER(button2) ~= 0 then button2 = ffi.string(button2) else button2 = nil end
 	if not caption:find('%S+') and not text:find('%S+') and not button1:find('%S+') then return end
 	dialoginfo = { id, style, caption, text:gsub('\n\n', '\n \n'):gsub('\t\t', '\t'), button1, button2, 0 }
+	while dialoginfo[4]:find('\t\t') do dialoginfo[4] = dialoginfo[4]:gsub('\t\t', '\t') end
 	dclist = false
 	maxwidth, maxheight = -1, -1
 	imgui.Process = true
