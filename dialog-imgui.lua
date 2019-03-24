@@ -211,8 +211,9 @@ local function render_button(i, text)
 	local item, item_hover, item_active = imgui.ColorConvertFloat4ToU32(colors[clr.Button]),
 		imgui.ColorConvertFloat4ToU32(colors[clr.ButtonHovered]),
 		imgui.ColorConvertFloat4ToU32(colors[clr.ButtonActive])
+	local ntext = text:gsub('{%x%x%x%x%x%x}', '')
 	local current = item
-	local size_text = imgui.CalcTextSize(u8(text)).x
+	local size_text = imgui.CalcTextSize(u8(ntext)).x
 	local c = imgui.GetCursorPos()
 	local res = imgui.InvisibleButton('##'..i, imgui.ImVec2(size_text + 8, imgui.GetFontSize() + 5))
 	if res then current = item_active end
@@ -298,7 +299,7 @@ function imgui.OnDrawFrame()
 					l = l + 1
 					if not columns[l] then columns[l] = 0 end
 					local size = imgui.CalcTextSize(u8(m))
-					if columns[l] < size.x then columns[l] = size.x + 15 end
+					if columns[l] < size.x then columns[l] = size.x + 20 end
 				end
 				maxheight = maxheight + size.y + style.ItemSpacing.y
 			end
@@ -400,10 +401,12 @@ function imgui.OnDrawFrame()
 		imgui.PopItemWidth()
 	end
 
+	-- button
 	if sy == 150 then imgui.SetCursorPosY(sy - 30) end
-	local sb = imgui.CalcTextSize(u8(dialoginfo[5])).x
+	local b1, b2 = dialoginfo[5]:gsub('{%x%x%x%x%x%x}', ''), dialoginfo[6]:gsub('{%x%x%x%x%x%x}', '')
+	local sb = imgui.CalcTextSize(u8(b1)).x
 	if dialoginfo[6] and #dialoginfo[6] > 0 then
-		sb = sb + imgui.CalcTextSize('  ' .. u8(dialoginfo[6])).x
+		sb = sb + imgui.CalcTextSize('  ' .. u8(b2)).x
 	end
 	imgui.SetCursorPos(imgui.ImVec2((sw - sb) / 2 - 4, imgui.GetCursorPosY() + 5))
 	if render_button(999, dialoginfo[5]) or dclist then run_button(true) end
