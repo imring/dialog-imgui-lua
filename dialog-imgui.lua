@@ -1,5 +1,5 @@
 script_author('imring')
-script_version_number(2.0)
+script_version_number(4.0)
 local ffi = require 'ffi'
 local memory = require 'memory'
 local imgui = require 'imgui'
@@ -18,7 +18,11 @@ typedef char CHAR;
 typedef CHAR *PCHAR;
 
 typedef void(__thiscall *HOOK_DIALOG)(PVOID this, WORD wID, BYTE iStyle, PCHAR szCaption, PCHAR szText, PCHAR szButton1, PCHAR szButton2, bool bSend);
+int GetLocaleInfoA(int Locale, int LCType, PCHAR lpLCData, int cchData);
+bool GetKeyboardLayoutNameA(char* pwszKLID);
 ]]
+local layout = ffi.new('char[10]')
+local info = ffi.new('char[10]')
 
 local hook_addr, call_addr, detour_addr, inf_addr
 local dialoginfo = {}
@@ -38,6 +42,7 @@ local dialog_hider = imgui.ImBool(false)
 local save = imgui.ImBool(false)
 local fontsize = imgui.ImInt(0)
 local fontname = imgui.ImBuffer(256)
+local layoute = imgui.ImBool(false)
 
 local ini = inicfg.load(nil, '..\\dialogimgui.ini')
 
@@ -55,7 +60,7 @@ local function apply_custom_style()
 	style.WindowTitleAlign = imgui.ImVec2(0.5, 0.84)
 	style.ChildWindowRounding = 2.0
 	style.FrameRounding = 2.0
-	style.ItemSpacing = imgui.ImVec2(5.0, 4.0)
+	style.WindowPadding = imgui.ImVec2(0.0, 0.0)
 	style.ScrollbarSize = 13.0
 	style.ScrollbarRounding = 0
 	style.GrabMinSize = 8.0
@@ -185,6 +190,7 @@ local function reload_ini()
 	save.v = ini.main.save
 	fontsize.v = ini.font.size
 	fontname.v = u8(ini.font.name)
+	layoute.v = ini.main.layout
 end
 
 local function save_ini()
@@ -196,6 +202,7 @@ local function save_ini()
 	ini.main.save = save.v
 	ini.font.size = fontsize.v
 	ini.font.name = u8:decode(fontname.v)
+	ini.main.layout = layoute.v
 
 	inicfg.save(ini, '..\\dialogimgui.ini')
 
@@ -322,15 +329,16 @@ local function render_selectable(i)
 		imgui.ColorConvertFloat4ToU32(colors[clr.FrameBgActive])
 	if list_dialog ~= i then item = 0x0 end
 	local current = item
-	local rect = imgui.ImVec2(cursor.x + imgui.GetWindowWidth() - 18, cursor.y + imgui.GetFontSize() + 5)
+	local rect = imgui.ImVec2(cursor.x + imgui.GetWindowWidth() - 8, cursor.y + imgui.GetFontSize() + 5)
+	if imgui.InvisibleButton('##'..i, imgui.ImVec2(imgui.GetWindowWidth() - 8, imgui.GetFontSize() + 5)) then
+		list_dialog = i
+		current = item_active
+	end
 	if imgui.IsMouseHoveringRect(cursor, rect) then
-		if imgui.IsMouseClicked(0) then
-			list_dialog = i
-		end
+		current = imgui.IsMouseDown(0) and item_active or item_hover
 		if imgui.IsMouseDoubleClicked(0) then
 			dclist = true
 		end
-		current = imgui.IsMouseDown(0) and item_active or item_hover
 	end
 	imgui.GetWindowDrawList():AddRectFilled(cursor, rect, current, 2)
 end
@@ -345,12 +353,12 @@ local function render_button(i, text)
 	local size_text = imgui.CalcTextSize(u8(ntext)).x
 	local c = imgui.GetCursorPos()
 	local res = imgui.InvisibleButton('##'..i, imgui.ImVec2(size_text + 8, imgui.GetFontSize() + 5))
-	local rect = imgui.ImVec2(cursor.x + size_text + 8, cursor.y + imgui.GetFontSize() + 5)
 	if res then current = item_active end
-	if imgui.IsMouseHoveringRect(cursor, rect) then
+	if imgui.IsMouseHoveringRect(cursor, imgui.ImVec2(cursor.x + size_text + 8, cursor.y + imgui.GetFontSize() + 5)) then
 		current = imgui.IsMouseDown(0) and item_active or item_hover
 	end
-	imgui.GetWindowDrawList():AddRectFilled(cursor, rect, current, 2)
+	imgui.GetWindowDrawList():AddRectFilled(cursor, imgui.ImVec2(cursor.x + size_text + 8, cursor.y + imgui.GetFontSize() + 5), 
+		current, 2)
 	c.x = c.x + 4
 	c.y = c.y + 2
 	imgui.SetCursorPos(c)
@@ -394,6 +402,16 @@ local function HelpMarker(desc)
 		imgui.PopTextWrapPos()
 		imgui.EndTooltip()
 	end
+end
+
+local function vec4_to_float4(vec4)
+	local r, g, b, a = vec4.x, vec4.y, vec4.z, vec4.w
+	return imgui.ImFloat4(r, g, b, a)
+end
+
+local function float4_to_vec4(float4)
+	local r, g, b, a = float4.v[1], float4.v[2], float4.v[3], float4.v[4]
+	return imgui.ImVec4(r, g, b, a)
 end
 
 function main()
@@ -464,7 +482,7 @@ function imgui.OnDrawFrame()
 					maxheight = maxheight + size.y + style.ItemSpacing.y
 				end
 				for i = 1, #columns do maxwidth = maxwidth + columns[i] end
-				maxheight = maxheight + 4 * i + 12
+				maxheight = maxheight + 4 * i - 10
 			else
 				local i = 0
 				for w in replace_t(dialoginfo[4]):gmatch('[^\r\n]+') do
@@ -472,12 +490,12 @@ function imgui.OnDrawFrame()
 					i = i + 1
 					local size = imgui.CalcTextSize(u8(w))
 					if maxwidth < size.x then maxwidth = size.x end
-					maxheight = maxheight + size.y + style.ItemSpacing.y
+					maxheight = maxheight + imgui.GetFontSize() + style.ItemSpacing.y
 				end
 				if dialoginfo[2] == 1 or dialoginfo[2] == 3 then
-					maxheight = maxheight + imgui.GetFontSize() + 10
+					maxheight = maxheight + imgui.GetFontSize() + 10 * ( maxheight * 0.024 )
 				elseif dialoginfo[2] == 2 then
-					maxheight = maxheight + 4 * i + 12
+					maxheight = maxheight + 4 * i - 10
 				end
 			end
 			maxheight = maxheight + style.ItemSpacing.y + ( imgui.GetFontSize() + 5 ) * 3 + 15
@@ -491,27 +509,26 @@ function imgui.OnDrawFrame()
 		imgui.Begin(u8(dialoginfo[3]), nil, imgui.WindowFlags.NoResize + imgui.WindowFlags.NoTitleBar --[[+ imgui.WindowFlags.HorizontalScrollbar]])
 		local sw, sy = imgui.GetWindowWidth(), imgui.GetWindowHeight()
 		
-		-- header
-		local cursor = imgui.GetCursorScreenPos()
-		cursor.x = cursor.x - 4
-		cursor.y = cursor.y - 3
-		imgui.GetWindowDrawList():AddRectFilled(cursor, imgui.ImVec2(cursor.x + sw - 9, cursor.y + imgui.GetFontSize() + 5), 
-			imgui.ColorConvertFloat4ToU32(colors[clr.TitleBgActive]))
-		imgui.SetCursorPos(imgui.ImVec2(imgui.GetCursorPosX() + 2, imgui.GetCursorPosY() - 1))
-		imguiTextColoredRGB(dialoginfo[3])
-		imgui.SetCursorPosY(imgui.GetCursorPosY() + 5)
-		imgui.Separator()
-		imgui.SetCursorPosY(imgui.GetCursorPosY() + 5)
+		-- header 
+		local cursor = imgui.GetCursorScreenPos() 
+		cursor.x = cursor.x - 4 
+		cursor.y = cursor.y - 3 
+		imgui.GetWindowDrawList():AddRectFilled(cursor, imgui.ImVec2(cursor.x + sw + 4, cursor.y + imgui.GetFontSize() + 5 + 3), 
+		imgui.ColorConvertFloat4ToU32(colors[clr.TitleBgActive])) 
+		imgui.SetCursorPos(imgui.ImVec2(imgui.GetCursorPosX() + 3, imgui.GetCursorPosY() + 2)) 
+		imguiTextColoredRGB(dialoginfo[3]) 
+		imgui.SetCursorPosY(imgui.GetCursorPosY() + 5) 
+		imgui.Indent(4)
 
 		-- info
-		imgui.BeginChild('##info', imgui.ImVec2(maxwidth, maxheight - ( imgui.GetFontSize() + 5 ) * 4))
+		imgui.BeginChild('##info', imgui.ImVec2(maxwidth, maxheight - ( imgui.GetFontSize() + 5 ) * 3))
 		if dialoginfo[2] == 2 then
 			local i = -1
 			for w in dialoginfo[4]:gmatch('[^\r\n]+') do
 				i = i + 1
 				local cursor_item = imgui.GetCursorPos()
 				render_selectable(i)
-				imgui.SetCursorPosY(cursor_item.y + 2)
+				imgui.SetCursorPosY(cursor_item.y + 1)
 				imgui.SetCursorPosX(cursor_item.x + 2)
 				imguiTextColoredRGB(w)
 				imgui.SetCursorPosY(imgui.GetCursorPosY() + 3)
@@ -524,6 +541,7 @@ function imgui.OnDrawFrame()
 			local _, c = a:gsub('\t', '')
 			if dialoginfo[2] == 5 then
 				info = info:match('^.-\n(.*)')
+				if not columns[c + 1] then c = c - 1 end
 				imgui.Columns(c + 1)
 				for i = 1, #columns - 1 do imgui.SetColumnWidth(i - 1, columns[i]) end
 				for w in a:gmatch('[^\t]+') do
@@ -541,6 +559,7 @@ function imgui.OnDrawFrame()
 				render_selectable(i)
 				imgui.SetCursorPosY(cursor_item.y + imgui.GetFontSize() + 10)
 			end
+			dialoginfo[8] = i
 			imgui.Columns(c + 1)
 			imgui.SetCursorPos(cursor)
 			for w in info:gmatch('[^\r\n]+') do
@@ -559,7 +578,21 @@ function imgui.OnDrawFrame()
 			imgui.Columns(1)
 		else imguiTextColoredRGB(dialoginfo[4]) end
 		if dialoginfo[2] == 1 or dialoginfo[2] == 3 then
-			imgui.PushItemWidth(sw - 15)
+			-- get layout
+			ffi.C.GetKeyboardLayoutNameA(layout)
+			ffi.C.GetLocaleInfoA(tonumber(ffi.string(layout), 16), 0x3, info, ffi.sizeof(info))
+			local res = ffi.string(info):sub(1, 2)
+			local cur = imgui.GetCursorPosY()
+			local off = 0
+			if ini.main.layout then
+				imgui.SetCursorPosY(cur + 1)
+				imgui.Text(res)
+				imgui.SameLine()
+				off = style.ItemSpacing.y + imgui.CalcTextSize(res).x
+			end
+
+			imgui.SetCursorPosY(cur)
+			imgui.PushItemWidth(sw - 15 - off)
 			imgui.InputText('##input', input_dialog, dialoginfo[2] == 3 and imgui.InputTextFlags.Password or 0)
 			if not is_focused then
 				imgui.SetKeyboardFocusHere()
@@ -576,33 +609,32 @@ function imgui.OnDrawFrame()
 		if dialoginfo[6] and #dialoginfo[6] > 0 then
 			sb = sb + imgui.CalcTextSize('  ' .. u8(b2)).x
 		end
-		imgui.SetCursorPos(imgui.ImVec2((sw - sb) / 2 - 4, imgui.GetCursorPosY() + 5))
+		imgui.SetCursorPos(imgui.ImVec2((sw - sb) / 2 - 4, imgui.GetCursorPosY()))
 		if render_button(999, dialoginfo[5]) or dclist then run_button(true) end
 		if dialoginfo[6] and #dialoginfo[6] > 0 then 
 			imgui.SameLine(nil, 7)
 			imgui.SetCursorPosY(imgui.GetCursorPosY() - 2)
 			if render_button(998, dialoginfo[6]) then run_button(false) end
 		end
+		imgui.Unindent(4)
 		imgui.End()
 	end
 	if settings then
 		imgui.SetNextWindowPos(imgui.ImVec2(x/2, y/2), imgui.Cond.FirstUseEver, imgui.ImVec2(0.5, 0.5))
-		imgui.SetNextWindowSize(imgui.ImVec2(500, 293), imgui.Cond.FirstUseEver)
+		imgui.SetNextWindowSize(imgui.ImVec2(500, 300), imgui.Cond.FirstUseEver)
 		imgui.Begin('Dialog ImGui | Settings', nil, imgui.WindowFlags.NoTitleBar --[[+ imgui.WindowFlags.HorizontalScrollbar]])
 		local sw, sy = imgui.GetWindowWidth(), imgui.GetWindowHeight()
 		
 		-- header
-		local cursor = imgui.GetCursorScreenPos()
-		cursor.x = cursor.x - 4
-		cursor.y = cursor.y - 3
-		imgui.GetWindowDrawList():AddRectFilled(cursor, imgui.ImVec2(cursor.x + sw - 9, cursor.y + imgui.GetFontSize() + 5), 
-			imgui.ColorConvertFloat4ToU32(colors[clr.TitleBgActive]))
-		print('title', imgui.ColorConvertFloat4ToU32(colors[clr.TitleBgActive]))
-		imgui.SetCursorPos(imgui.ImVec2(imgui.GetCursorPosX() + 2, imgui.GetCursorPosY() - 1))
+		local cursor = imgui.GetCursorScreenPos() 
+		cursor.x = cursor.x - 4 
+		cursor.y = cursor.y - 3 
+		imgui.GetWindowDrawList():AddRectFilled(cursor, imgui.ImVec2(cursor.x + sw + 4, cursor.y + imgui.GetFontSize() + 5 + 3), 
+		imgui.ColorConvertFloat4ToU32(colors[clr.TitleBgActive])) 
+		imgui.SetCursorPos(imgui.ImVec2(imgui.GetCursorPosX() + 3, imgui.GetCursorPosY() + 1)) 
 		imgui.Text('Dialog ImGui | Settings')
-		imgui.SetCursorPosY(imgui.GetCursorPosY() + 5)
-		imgui.Separator()
-		imgui.SetCursorPosY(imgui.GetCursorPosY() + 5)
+		imgui.SetCursorPosY(imgui.GetCursorPosY() + 5) 
+		imgui.Indent(4)
 
 		-- info
 		imgui.Checkbox(u8'Включить Dialog Hider', dialog_hider)
@@ -627,10 +659,23 @@ function imgui.OnDrawFrame()
 			imgui.Unindent(25)
 		end
 		imgui.Checkbox(u8'Включить сохранение элементов после закрытия', save)
-		imgui.ColorEdit4(u8'Цвет фона', colors[clr.WindowBg])
-		imgui.ColorEdit4(u8'Цвет кнопок', colors[clr.Button])
-		imgui.ColorEdit4(u8'Цвет заголовка', colors[clr.TitleBgActive])
-		imgui.ColorEdit4(u8'Цвет выбранного элемента', colors[clr.FrameBg])
+		imgui.Checkbox(u8'Включить показ раскладки', layoute)
+		local win = vec4_to_float4(colors[clr.WindowBg])
+		if imgui.ColorEdit4(u8'Цвет фона', win, imgui.ColorEditFlags.AlphaBar) then
+			colors[clr.WindowBg] = float4_to_vec4(win)
+		end
+		local but = vec4_to_float4(colors[clr.Button])
+		if imgui.ColorEdit4(u8'Цвет кнопок', but, imgui.ColorEditFlags.AlphaBar) then
+			colors[clr.Button] = float4_to_vec4(but)
+		end
+		local tit = vec4_to_float4(colors[clr.TitleBgActive])
+		if imgui.ColorEdit4(u8'Цвет заголовка', tit, imgui.ColorEditFlags.AlphaBar) then
+			colors[clr.TitleBgActive] = float4_to_vec4(tit)
+		end
+		local frame = vec4_to_float4(colors[clr.FrameBg])
+		if imgui.ColorEdit4(u8'Цвет выбранного элемента', frame, imgui.ColorEditFlags.AlphaBar) then
+			colors[clr.FrameBg] = float4_to_vec4(frame)
+		end
 		imgui.InputInt(u8'Размер шрифта', fontsize, 0)
 		imgui.SameLine()
 		HelpMarker(u8'Измениться после перезапуска скрипта/игры.')
@@ -638,16 +683,17 @@ function imgui.OnDrawFrame()
 		imgui.SameLine()
 		HelpMarker(u8'Измениться после перезапуска скрипта/игры.')
 		if imgui.Button(u8('Применить')) then save_ini() end
+		imgui.Unindent(4)
 		imgui.End()
 	end
 end
 
 function onWindowMessage(msg, wparam, lparam)
 	if msg == 0x100 or msg == 0x101 then
-		if wparam == keys.VK_ESCAPE and dialogenable and msg == 0x101 and isKeyCheckAvailable() then
+		if wparam == keys.VK_ESCAPE and dialogenable and isKeyCheckAvailable() then
 			consumeWindowMessage(true, false)
 			if msg == 0x101 then run_button(false) end
-		elseif wparam == keys.VK_RETURN and dialogenable and msg == 0x101 and isKeyCheckAvailable() then
+		elseif wparam == keys.VK_RETURN and dialogenable and isKeyCheckAvailable() then
 			consumeWindowMessage(true, false)
 			if msg == 0x101 then run_button(true) end
 		elseif ( wparam == keys.VK_UP or keys.VK_DOWN ) and dialogenable and isKeyCheckAvailable() and ( dialoginfo[2] == 2 or dialoginfo[2] == 4 or dialoginfo[2] == 5 ) then
