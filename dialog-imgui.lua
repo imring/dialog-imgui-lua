@@ -636,7 +636,7 @@ function imgui.OnDrawFrame()
 	end
 	if settings then
 		imgui.SetNextWindowPos(imgui.ImVec2(x/2, y/2), imgui.Cond.FirstUseEver, imgui.ImVec2(0.5, 0.5))
-		imgui.SetNextWindowSize(imgui.ImVec2(500, 300), imgui.Cond.FirstUseEver)
+		imgui.SetNextWindowSize(imgui.ImVec2(500, 277), imgui.Cond.FirstUseEver)
 		imgui.Begin('Dialog ImGui | Settings', nil, imgui.WindowFlags.NoTitleBar --[[+ imgui.WindowFlags.HorizontalScrollbar]])
 		local sw, sy = imgui.GetWindowWidth(), imgui.GetWindowHeight()
 		
