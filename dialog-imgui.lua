@@ -1,12 +1,11 @@
 script_author('imring')
-script_version_number(4.0)
+script_version_number(6.0)
 local ffi = require 'ffi'
 local memory = require 'memory'
 local imgui = require 'imgui'
 local encoding = require 'encoding'
 encoding.default = 'CP1251'
 local u8 = encoding.UTF8
-local keys = require 'vkeys'
 local inicfg = require 'inicfg'
 
 ffi.cdef[[
@@ -24,18 +23,16 @@ bool GetKeyboardLayoutNameA(char* pwszKLID);
 local layout = ffi.new('char[10]')
 local info = ffi.new('char[10]')
 
-local hook_addr, call_addr, detour_addr, inf_addr
 local dialoginfo = {}
 local input_dialog = imgui.ImBuffer(0xFFFF)
 local list_dialog = 0
 local dclist = false
-local ignore = {}
 local columns = {}
 local maxwidth = -1
 local maxheight = -1
 local dialogs = {}
 local is_focused = false
-local original_shift
+local last_id = -1
 
 local settings = false
 local dialog_hider = imgui.ImBool(false)
@@ -43,10 +40,12 @@ local save = imgui.ImBool(false)
 local fontsize = imgui.ImInt(0)
 local fontname = imgui.ImBuffer(256)
 local layoute = imgui.ImBool(false)
+local imguistart = imgui.ImBool(false)
+local screendialog = imgui.ImBool(false)
 
 local ini = inicfg.load(nil, '..\\dialogimgui.ini')
 
-local function GET_POINTER(cdata) return tonumber(ffi.cast('uintptr_t', ffi.cast('PVOID', cdata))) end
+local fontChanged = false
 
 local style = imgui.GetStyle()
 local colors = style.Colors
@@ -191,6 +190,10 @@ local function reload_ini()
 	fontsize.v = ini.font.size
 	fontname.v = u8(ini.font.name)
 	layoute.v = ini.main.layout
+	imguistart.v = ini.dialog.show
+	screendialog.v = ini.dialog.screen
+
+	fontChanged = false
 end
 
 local function save_ini()
@@ -203,28 +206,12 @@ local function save_ini()
 	ini.font.size = fontsize.v
 	ini.font.name = u8:decode(fontname.v)
 	ini.main.layout = layoute.v
+	ini.dialog.show = imguistart.v
+	ini.dialog.screen = screendialog.v
 
 	inicfg.save(ini, '..\\dialogimgui.ini')
 
 	reload_ini()
-end
-
-local function returnFunc(h, i, bool)
-	if bool then
-		local p = memory.unprotect(h, 6)
-		ffi.copy(ffi.cast('void*', h), i, 6)
-		memory.protect(h, 6, p)
-	else
-		memory.setuint8(h, 0xE9, true)
-		memory.setuint32(h + 1, i - h - 5, true)
-		memory.setuint8(h + 5, 0xC3, true)
-	end
-end
-
-local function enableDialog(bool)
-	local memory = require 'memory'
-	memory.setint32(sampGetDialogInfoPtr()+40, bool and 1 or 0, true)
-	sampToggleCursor(bool)
 end
 
 -- попытка фикса (работает ток при шрифте cour.ttf)
@@ -236,31 +223,6 @@ local function replace_t(str)
 		str = str:gsub('\t', (' '):rep(a), 1)
 	end
 	return str
-end
-
-local function cmdhook(this, id, style, caption, text, button1, button2, send)
-	returnFunc(hook_addr, inf_addr, true)
-	call_addr(this, id, style, caption, text, button1, button2, send)
-	returnFunc(hook_addr, detour_addr, false)
-	caption, text, button1 = ffi.string(caption), ffi.string(text), ffi.string(button1)
-	if GET_POINTER(button2) ~= 0 then button2 = ffi.string(button2) else button2 = nil end
-	if id == 65535 or not text:find('%S+') then return enableDialog(false) end
-	dialoginfo = { id, style, caption, text:gsub('\n\n', '\n \n'), button1, button2, 0 }
-	if dialoginfo[2] == 4 or dialoginfo[2] == 5 then
-		while dialoginfo[4]:find('\t\t') do dialoginfo[4] = dialoginfo[4]:gsub('\t\t', '\t') end
-	end
-	dclist = false
-	is_focused = false
-	maxwidth, maxheight = -1, -1
-	dialogenable = true
-	if dialogs[id] and ini.main.save then
-		input_dialog.v = u8(dialogs[id][2])
-		list_dialog = dialogs[id][1]
-	else
-		input_dialog.v = ''
-		list_dialog = 0
-	end
-	enableDialog(false)
 end
 
 local function imguiTextColoredRGB(text)
@@ -289,6 +251,7 @@ local function imguiTextColoredRGB(text)
 	end
 
 	local render_text = function(text_)
+		local prevclr = colors[1]
 		for w in text_:gmatch('[^\r\n]+') do
 			w = replace_t(w)
 			local text, colors_, m = {}, {}, 1
@@ -305,7 +268,7 @@ local function imguiTextColoredRGB(text)
 			end
 			if text[0] then
 				for i = 0, #text do
-					imgui.TextColored(colors_[i] or colors[1], u8(text[i]))
+					imgui.TextColored(colors_[i] or prevclr, u8(text[i]))
 					imgui.SameLine(nil, 0)
 				end
 				imgui.NewLine()
@@ -331,7 +294,7 @@ local function render_selectable(i)
 	local current = item
 	local rect = imgui.ImVec2(cursor.x + imgui.GetWindowWidth() - 8, cursor.y + imgui.GetFontSize() + 5)
 	if imgui.InvisibleButton('##'..i, imgui.ImVec2(imgui.GetWindowWidth() - 8, imgui.GetFontSize() + 5)) then
-		list_dialog = i
+		sampSetCurrentDialogListItem(i)
 		current = item_active
 	end
 	if imgui.IsMouseHoveringRect(cursor, rect) then
@@ -367,13 +330,10 @@ local function render_button(i, text)
 end
 
 local function run_button(bool)
-	enableDialog(true)
-	sampSetCurrentDialogEditboxText(u8:decode(input_dialog.v))
 	sampSetCurrentDialogListItem(list_dialog)
 	sampCloseCurrentDialogWithButton(bool and 1 or 0)
-	dialogenable = false
+	last_id = -1
 	dialogs[dialoginfo[1]] = { list_dialog, u8:decode(input_dialog.v) }
-	--memory.hex2bin(original_shift, sampGetBase() + 0x85860, 3)
 end
 
 local function isKeyCheckAvailable()
@@ -414,45 +374,82 @@ local function float4_to_vec4(float4)
 	return imgui.ImVec4(r, g, b, a)
 end
 
+local func_get_button
+local function sampGetDialogButtons()
+    local dialog = ffi.cast('void*', getStructElement(sampGetDialogInfoPtr(), 0x1C, 4))
+    local b1p = func_get_button(dialog, 20, 0) + 0x4D
+    local b2p = func_get_button(dialog, 21, 0) + 0x4D
+    return ffi.string(b1p), ffi.string(b2p)
+end
+
+local is_screen, original = false, 0
 function main()
 	if not isSampLoaded() then return end
-	while not isSampAvailable() do wait(0) end
-
-	local callback = ffi.cast('HOOK_DIALOG', cmdhook)
-	detour_addr = GET_POINTER(callback)
-
-	local samp = getModuleHandle('samp.dll')
-	hook_addr = samp + 0x6B9C0
-	inf_addr = ffi.new('BYTE[6]')
-	ffi.copy(inf_addr, ffi.cast('void*', hook_addr), 6)
-	call_addr = ffi.cast('HOOK_DIALOG', hook_addr)
-	returnFunc(hook_addr, detour_addr, false)
-
-	sampRegisterChatCommand('disettings', function() settings = not settings end)
 	reload_ini()
 
+	func_get_button = ffi.cast('char*(__thiscall *)(void* this, int a, int b)', sampGetBase() + 0x82C50)
+	original = memory.getuint8(sampGetBase() + 0x6B240, true)
+	if imguistart.v then memory.setuint8(sampGetBase() + 0x6B240, 0xC3, true) end -- disable render dxut dialog
+
+	while not isSampAvailable() do wait(0) end
+
+	sampRegisterChatCommand('disettings', function() settings = not settings end)
+
 	while true do wait(0)
-		if wasKeyPressed(ini.main.hide) and ini.main.hider and dialogenable then
-			dialogenable = false
-		elseif wasKeyPressed(ini.main.show) and ini.main.hider and #dialoginfo > 0 then
-			dialogenable = true
+		imgui.Process = sampIsDialogActive() or settings
+		if sampIsDialogActive() then
+			local b1, b2 = sampGetDialogButtons()
+			dialoginfo = { sampGetCurrentDialogId(), sampGetCurrentDialogType(), sampGetDialogCaption(), sampGetDialogText():gsub('\n\n', '\n \n'), b1, b2 }
+			list_dialog = sampGetCurrentDialogListItem()
+			input_dialog.v = u8(sampGetCurrentDialogEditboxText())
+			if last_id ~= dialoginfo[1] then
+				local id = dialoginfo[1]
+				dclist = false
+				is_focused = false
+				maxwidth, maxheight = -1, -1
+				if dialogs[id] and ini.main.save then
+					sampSetCurrentDialogEditboxText(dialogs[id][2])
+					sampSetCurrentDialogListItem(dialogs[id][1])
+				end
+				last_id = id
+			end
+			lockPlayerControl(true)
+		else
+			last_id = -1
+			wait(100)
+			lockPlayerControl(false)
 		end
-		imgui.Process = dialogenable or settings
+		if screendialog.v and sampIsDialogActive() then
+			if memory.getuint8(sampGetBase() + 0x119CBC) == 1 and not is_screen then
+				memory.setuint8(sampGetBase() + 0x119CBC, 0)
+				memory.setuint8(sampGetBase() + 0x6B240, original, true) -- enable render dxut dialog
+				imgui.Process = false
+				wait(100)
+				memory.setuint8(sampGetBase() + 0x119CBC, 1)
+				is_screen = true
+			elseif memory.getuint8(sampGetBase() + 0x119CBC) == 0 and is_screen then
+				memory.setuint8(sampGetBase() + 0x6B240, 0xC3, true) -- disable render dxut dialog
+				sampToggleCursor(false)
+				imgui.Process = sampIsDialogActive() or settings
+				is_screen = false
+			end
+		end
 	end
 end
 
 function onScriptTerminate(scr)
 	if scr == script.this then
-		returnFunc(hook_addr, inf_addr, true)
+		memory.setuint8(sampGetBase() + 0x6B240, original, true) -- enable render dxut dialog
 	end
 end
 
-local fontChanged = false
 function imgui.BeforeDrawFrame()
 	if not fontChanged then
 		fontChanged = true
 		local glyph_ranges = imgui.GetIO().Fonts:GetGlyphRangesCyrillic()
 		imgui.GetIO().Fonts:Clear()
+		local path = getFolderPath(0x14) .. '\\' .. u8:decode(fontname.v)
+		if not doesFileExist(path) then path = getFolderPath(0x14) .. '\\arial.ttf' end
 		imgui.GetIO().Fonts:AddFontFromFileTTF(getFolderPath(0x14) .. '\\' .. u8:decode(fontname.v), fontsize.v, nil, glyph_ranges) -- cour.ttf
 		imgui.RebuildFonts()
 	end
@@ -461,11 +458,12 @@ end
 apply_custom_style()
 function imgui.OnDrawFrame()
 	local x, y = getScreenResolution()
-	if dialogenable and not sampIsChatInputActive() and not sampIsScoreboardOpen() then
+	if sampIsDialogActive() and imguistart.v and not sampIsChatInputActive() and not sampIsScoreboardOpen() then
 		-- size
 		if maxwidth == -1 and maxheight == -1 then
 			local title = dialoginfo[3]:gsub('{%x%x%x%x%x%x}', '')
 			maxwidth = imgui.CalcTextSize(u8(title)).x
+			maxheight = imgui.GetFontSize() + 13
 			if dialoginfo[2] == 4 or dialoginfo[2] == 5 then
 				local i = 0
 				for w in dialoginfo[4]:gmatch('[^\r\n]+') do
@@ -479,29 +477,32 @@ function imgui.OnDrawFrame()
 						local size = imgui.CalcTextSize(u8(m))
 						if columns[l] - 20 < size.x then columns[l] = size.x + 20 end
 					end
-					maxheight = maxheight + size.y + style.ItemSpacing.y
+					maxheight = maxheight + imgui.GetFontSize() + 5 + style.ItemSpacing.y + 1.5
 				end
-				for i = 1, #columns do maxwidth = maxwidth + columns[i] end
-				maxheight = maxheight + 4 * i - 10
+				local mw = 0
+				for i = 1, #columns do mw = mw + columns[i] end
+				if mw > maxwidth then maxwidth = mw end
+				maxheight = maxheight + 5
 			else
 				local i = 0
-				for w in replace_t(dialoginfo[4]):gmatch('[^\r\n]+') do
-					w = w:gsub('{%x%x%x%x%x%x}', '')
+				for w in replace_t(dialoginfo[4]:gsub('{%x%x%x%x%x%x}', '')):gmatch('[^\r\n]+') do
 					i = i + 1
 					local size = imgui.CalcTextSize(u8(w))
 					if maxwidth < size.x then maxwidth = size.x end
-					maxheight = maxheight + imgui.GetFontSize() + style.ItemSpacing.y
+					if dialoginfo[2] == 2 then maxheight = maxheight + imgui.GetFontSize() + 8
+					else maxheight = maxheight + imgui.GetFontSize() + style.ItemSpacing.y + 1 end
 				end
+				if dialoginfo[2] == 2 then maxheight = maxheight + 15 end
+				-- if dialoginfo[2] == 2 then maxheight = maxheight + 5 * i end
 				if dialoginfo[2] == 1 or dialoginfo[2] == 3 then
-					maxheight = maxheight + imgui.GetFontSize() + 10 * ( maxheight * 0.024 )
-				elseif dialoginfo[2] == 2 then
-					maxheight = maxheight + 4 * i - 10
+					maxheight = maxheight + style.ItemSpacing.y + imgui.GetFontSize() * 2 + 5
 				end
 			end
-			maxheight = maxheight + style.ItemSpacing.y + ( imgui.GetFontSize() + 5 ) * 3 + 15
-			maxwidth = maxwidth + 22
-			if maxwidth < 350 then maxwidth = 350 elseif maxwidth > x / 1.5 then maxwidth = math.floor(x / 1.5) end
-			if maxheight < 150 then maxheight = 150 elseif maxheight > y / 1.5 then maxheight = math.floor(y / 1.5) end
+			maxheight = maxheight + style.ItemSpacing.y + imgui.GetFontSize()
+			-- maxheight = maxheight + style.ItemSpacing.y + ( imgui.GetFontSize() + 5 ) * 3 + 15
+			maxwidth = maxwidth + 8
+			if maxwidth < 300 then maxwidth = 300 --[[elseif maxwidth > x / 1.2 then maxwidth = math.floor(x / 1.5)]] end
+			if maxheight < 100 then maxheight = 100 elseif maxheight > y / 1.1 then maxheight = math.floor(y / 1.1) end
 		end
 
 		imgui.SetNextWindowPos(imgui.ImVec2(x/2, y/2), imgui.Cond.Once, imgui.ImVec2(0.5, 0.5))
@@ -543,8 +544,10 @@ function imgui.OnDrawFrame()
 				info = info:match('^.-\n(.*)')
 				if not columns[c + 1] then c = c - 1 end
 				imgui.Columns(c + 1)
-				for i = 1, #columns - 1 do imgui.SetColumnWidth(i - 1, columns[i]) end
+				local i = 0
 				for w in a:gmatch('[^\t]+') do
+					i = i + 1
+					if i ~= c then imgui.SetColumnWidth(imgui.GetColumnIndex(), columns[i]) end
 					imguiTextColoredRGB(w)
 					imgui.NextColumn()
 				end
@@ -585,18 +588,30 @@ function imgui.OnDrawFrame()
 			local cur = imgui.GetCursorPosY()
 			local off = 0
 			if ini.main.layout then
-				imgui.SetCursorPosY(cur + 1)
+				--[[imgui.SetCursorPosY(cur + 1)
 				imgui.Text(res)
-				imgui.SameLine()
+				imgui.SameLine()]]
 				off = style.ItemSpacing.y + imgui.CalcTextSize(res).x
 			end
 
 			imgui.SetCursorPosY(cur)
-			imgui.PushItemWidth(sw - 15 - off)
-			imgui.InputText('##input', input_dialog, dialoginfo[2] == 3 and imgui.InputTextFlags.Password or 0)
+			imgui.PushItemWidth(sw - 10 - ( off > 0 and off + 5 or 0))
+			if imgui.InputText('##input', input_dialog, dialoginfo[2] == 3 and imgui.InputTextFlags.Password or 0) then
+				sampSetCurrentDialogEditboxText(u8:decode(input_dialog.v))
+			end
 			if not is_focused then
 				imgui.SetKeyboardFocusHere()
 				is_focused = true
+			end
+			if ini.main.layout then
+				imgui.SameLine()
+				local bgnew = imgui.ImVec4(colors[clr.WindowBg].x + 0.1, colors[clr.WindowBg].y + 0.1, colors[clr.WindowBg].z + 0.1, colors[clr.WindowBg].w)
+				local cursor = imgui.GetCursorScreenPos()
+				cursor.x = cursor.x - 2
+				imgui.GetWindowDrawList():AddRectFilled(cursor, imgui.ImVec2(cursor.x + off, cursor.y + imgui.GetFontSize() + 5), 
+					imgui.ColorConvertFloat4ToU32(bgnew), 2)
+				imgui.SetCursorPosY(cur - 2)
+				imgui.Text(res)
 			end
 			imgui.PopItemWidth()
 		end
@@ -634,87 +649,46 @@ function imgui.OnDrawFrame()
 		imgui.SetCursorPos(imgui.ImVec2(imgui.GetCursorPosX() + 3, imgui.GetCursorPosY() + 1)) 
 		imgui.Text('Dialog ImGui | Settings')
 		imgui.SetCursorPosY(imgui.GetCursorPosY() + 5) 
+		imgui.PushStyleVar(imgui.StyleVar.WindowPadding, imgui.ImVec2(8, 8))
 		imgui.Indent(4)
 
 		-- info
-		imgui.Checkbox(u8'Включить Dialog Hider', dialog_hider)
-		if dialog_hider.v then
-			imgui.Indent(25)
-			imgui.Text(u8('Кнопка скрытия: ' .. keys.id_to_name(ini.main.hide)))
-			imgui.SameLine()
-			if imgui.Button(u8('Изменить##1')) then
-				lua_thread.create(function()
-					while not getKeyPressed() do wait(0) end
-					ini.main.hide = getKeyPressed()
-				end)
+		if imgui.Checkbox(u8'Включить Dialog ImGui', imguistart) then
+			if imguistart.v then memory.setuint8(sampGetBase() + 0x6B240, 0xC3, true)
+			else memory.setuint8(sampGetBase() + 0x6B240, original, true) end
+		end
+		if imguistart.v then
+			imgui.Checkbox(u8'Возвращать стандарт. диалог при нажатие F8', screendialog)
+			imgui.Checkbox(u8'Включить сохранение элементов после закрытия', save)
+			imgui.Checkbox(u8'Включить показ раскладки', layoute)
+			local win = vec4_to_float4(colors[clr.WindowBg])
+			if imgui.ColorEdit4(u8'Цвет фона', win, imgui.ColorEditFlags.AlphaBar) then
+				colors[clr.WindowBg] = float4_to_vec4(win)
 			end
-			imgui.Text(u8('Кнопка показа: ' .. keys.id_to_name(ini.main.show)))
-			imgui.SameLine()
-			if imgui.Button(u8('Изменить##2')) then
-				lua_thread.create(function()
-					while not getKeyPressed() do wait(0) end
-					ini.main.show = getKeyPressed()
-				end)
+			local but = vec4_to_float4(colors[clr.Button])
+			if imgui.ColorEdit4(u8'Цвет кнопок', but, imgui.ColorEditFlags.AlphaBar) then
+				colors[clr.Button] = float4_to_vec4(but)
 			end
-			imgui.Unindent(25)
+			local tit = vec4_to_float4(colors[clr.TitleBgActive])
+			if imgui.ColorEdit4(u8'Цвет заголовка', tit, imgui.ColorEditFlags.AlphaBar) then
+				colors[clr.TitleBgActive] = float4_to_vec4(tit)
+			end
+			local frame = vec4_to_float4(colors[clr.FrameBg])
+			if imgui.ColorEdit4(u8'Цвет выбранного элемента', frame, imgui.ColorEditFlags.AlphaBar) then
+				colors[clr.FrameBg] = float4_to_vec4(frame)
+			end
+			imgui.InputInt(u8'Размер шрифта', fontsize, 0)
+			imgui.InputText(u8'Название шрифта', fontname)
 		end
-		imgui.Checkbox(u8'Включить сохранение элементов после закрытия', save)
-		imgui.Checkbox(u8'Включить показ раскладки', layoute)
-		local win = vec4_to_float4(colors[clr.WindowBg])
-		if imgui.ColorEdit4(u8'Цвет фона', win, imgui.ColorEditFlags.AlphaBar) then
-			colors[clr.WindowBg] = float4_to_vec4(win)
-		end
-		local but = vec4_to_float4(colors[clr.Button])
-		if imgui.ColorEdit4(u8'Цвет кнопок', but, imgui.ColorEditFlags.AlphaBar) then
-			colors[clr.Button] = float4_to_vec4(but)
-		end
-		local tit = vec4_to_float4(colors[clr.TitleBgActive])
-		if imgui.ColorEdit4(u8'Цвет заголовка', tit, imgui.ColorEditFlags.AlphaBar) then
-			colors[clr.TitleBgActive] = float4_to_vec4(tit)
-		end
-		local frame = vec4_to_float4(colors[clr.FrameBg])
-		if imgui.ColorEdit4(u8'Цвет выбранного элемента', frame, imgui.ColorEditFlags.AlphaBar) then
-			colors[clr.FrameBg] = float4_to_vec4(frame)
-		end
-		imgui.InputInt(u8'Размер шрифта', fontsize, 0)
-		imgui.SameLine()
-		HelpMarker(u8'Измениться после перезапуска скрипта/игры.')
-		imgui.InputText(u8'Название шрифта', fontname)
-		imgui.SameLine()
-		HelpMarker(u8'Измениться после перезапуска скрипта/игры.')
 		if imgui.Button(u8('Применить')) then save_ini() end
 		imgui.Unindent(4)
+		imgui.PopStyleVar()
 		imgui.End()
-	end
-end
-
-function onWindowMessage(msg, wparam, lparam)
-	if msg == 0x100 or msg == 0x101 then
-		if wparam == keys.VK_ESCAPE and dialogenable and isKeyCheckAvailable() then
-			consumeWindowMessage(true, false)
-			if msg == 0x101 then run_button(false) end
-		elseif wparam == keys.VK_RETURN and dialogenable and isKeyCheckAvailable() then
-			consumeWindowMessage(true, false)
-			if msg == 0x101 then run_button(true) end
-		elseif ( wparam == keys.VK_UP or keys.VK_DOWN ) and dialogenable and isKeyCheckAvailable() and ( dialoginfo[2] == 2 or dialoginfo[2] == 4 or dialoginfo[2] == 5 ) then
-			if msg == 0x100 then
-				consumeWindowMessage(true, false)
-				if wparam == keys.VK_DOWN then
-					if list_dialog ~= dialoginfo[8] then
-						list_dialog = list_dialog + 1
-					--[[else list_dialog = 0]] end
-				elseif wparam == keys.VK_UP then
-					if list_dialog ~= 0 then
-						list_dialog = list_dialog - 1
-					--[[else list_dialog = dialoginfo[8]] end
-				end
-			end
-		end
 	end
 end
 
 -- fucking shift
 function onSendRpc(id, bs)
 	local str = memory.getuint32(sampGetBase() + 0x21A18C)
-	if ( id == 128 or id == 129 ) and memory.getuint8(str + 0x13) == 1 and imgui.Process then return false end
+	if ( id == 128 or id == 129 ) and memory.getuint8(str + 0x13) == 1 and sampIsDialogActive() then return false end
 end
