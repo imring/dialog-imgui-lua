@@ -1,4 +1,4 @@
-# Dialog ImGui
+![](https://media.discordapp.net/attachments/447759797400633377/560445767991558175/dialogimguiv5.png)
 This script changes the dialog interface from DXUT to ImGui.
 
 Requirements:
