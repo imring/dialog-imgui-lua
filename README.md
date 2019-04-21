@@ -8,6 +8,10 @@ Requirements:
 
 Installation: from the archive **dialog_imgui_v6.rar** transfer files to the **moonloader** folder.
 
+Download:
+* [GitHub Release](https://github.com/imring/dialog-imgui-lua/releases/latest)
+* [BlastHack](https://blast.hk/threads/32007/)
+
 ## Updates
 
 ### Version 1.0
