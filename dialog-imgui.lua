@@ -1,5 +1,5 @@
 script_author('imring')
-script_version_number(6.0)
+script_version_number(7.0)
 local ffi = require 'ffi'
 local memory = require 'memory'
 local imgui = require 'imgui'
@@ -35,7 +35,6 @@ local is_focused = false
 local last_id = -1
 
 local settings = false
-local dialog_hider = imgui.ImBool(false)
 local save = imgui.ImBool(false)
 local fontsize = imgui.ImInt(0)
 local fontname = imgui.ImBuffer(256)
@@ -185,7 +184,6 @@ local function reload_ini()
 	colors[clr.ScrollbarGrabActive]    = frameactive
 	colors[clr.CheckMark]              = check
 
-	dialog_hider.v = ini.main.hider
 	save.v = ini.main.save
 	fontsize.v = ini.font.size
 	fontname.v = u8(ini.font.name)
@@ -201,7 +199,6 @@ local function save_ini()
 	ini.colors.button = imgui.ColorConvertFloat4ToU32(colors[clr.Button])
 	ini.colors.title = imgui.ColorConvertFloat4ToU32(colors[clr.TitleBgActive])
 	ini.colors.background = imgui.ColorConvertFloat4ToU32(colors[clr.WindowBg])
-	ini.main.hider = dialog_hider.v
 	ini.main.save = save.v
 	ini.font.size = fontsize.v
 	ini.font.name = u8:decode(fontname.v)
@@ -277,6 +274,11 @@ local function imguiTextColoredRGB(text)
 	end
 
 	render_text(text:gsub('\n\n', '\n \n'))
+end
+
+local function sampGetCurrentDialogListItem()
+	local list = getStructElement(sampGetDialogInfoPtr(), 0x20, 4)
+	return getStructElement(list, 0x143 --[[m_nSelected]], 4)
 end
 
 local function sampSetCurrentDialogListItem(number)
