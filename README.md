@@ -46,3 +46,7 @@ Installation: from the archive **dialog_imgui_v6.rar** transfer files to the **m
 * Recalculated height in dialogs.
 * Removed Dialog Hider.
 * Added indent in ColorEdit.
+
+### Version 7.0
+* Fixed problem with .ini.
+* Fixed bug with the choice of the element in dialogs 4 and 5 styles.
