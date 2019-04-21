@@ -6,7 +6,7 @@ Requirements:
 * [MoonLoader](https://blast.hk/threads/13305/)
 * [MoonImGui](https://blast.hk/threads/19292/)
 
-Installation: from the archive **dialog_imgui_v6.rar** transfer files to the **moonloader** folder.
+Installation: from the archive **dialog_imgui_v7.rar** transfer files to the **moonloader** folder.
 
 Download:
 * [GitHub Release](https://github.com/imring/dialog-imgui-lua/releases/latest)
