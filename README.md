@@ -15,6 +15,15 @@ Download:
 * [GitHub Release](https://github.com/imring/dialog-imgui-lua/releases/latest)
 * [BlastHack](https://blast.hk/threads/32007/)
 
+## Settings
+Activate menu: /disettings
+
+* Enable Dialog ImGui - enable dialog with the new interface (standard included).
+* Return the standard dialog when pressing F8 - returns the standard (DXUT) dialog when saving a screenshot.
+* Enable Dialog Hider - this feature allows you to enable dialog after it is closed. (this function is not available since version 6.0).
+* Enable item retention after closing.
+* Enable layout display - includes the display of the keyboard layout near the input line.
+
 ## Updates
 
 ### Version 1.0
@@ -76,11 +85,11 @@ Download:
 ## Настройки
 Активация меню: /disettings
 
-Включить Dialog ImGui - включить непосредственно диалог с новым интерфейсом (по-стандартному включен).
-Возвращать стандарт. диалог при нажатие F8 - возвращает стандартный (DXUT) диалог при сохранении скриншота.
-Включить Dialog Hider - данная функция позволяет включить диалог после его закрытия (данной функции нету начиная с версии 6.0).
-Включить сохранение элементов после закрытия.
-Включить показ раскладки - включает возле ввода строки показ раскладки клавиатуры.
+* Включить Dialog ImGui - включить непосредственно диалог с новым интерфейсом (по-стандартному включен).
+* Возвращать стандарт. диалог при нажатие F8 - возвращает стандартный (DXUT) диалог при сохранении скриншота.
+* Включить Dialog Hider - данная функция позволяет включить диалог после его закрытия (данной функции нету начиная с версии 6.0).
+* Включить сохранение элементов после закрытия.
+* Включить показ раскладки - включает возле ввода строки показ раскладки клавиатуры.
 
 ## Обновления
 
