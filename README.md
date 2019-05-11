@@ -9,7 +9,7 @@ Requirements:
 * [MoonLoader](https://blast.hk/threads/13305/)
 * [MoonImGui](https://blast.hk/threads/19292/)
 
-Installation: from the archive **dialog_imgui_v7.rar** transfer files to the **moonloader** folder.
+Installation: from the archive **dialog_imgui_v8.rar** transfer files to the **moonloader** folder.
 
 Download:
 * [GitHub Release](https://github.com/imring/dialog-imgui-lua/releases/latest)
@@ -141,6 +141,6 @@ Activate menu: /disettings
 
 ### Версия 8.0
 * Исправлены баги в диалогах 4 и 5 стиля.
-* Исправлены не валидные символы.
+* Исправлены невалидные символы.
 * Исправлен подсчет размера диалога.
 * Настройки теперь на английском языке.
