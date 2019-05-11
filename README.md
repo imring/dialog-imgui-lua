@@ -67,6 +67,11 @@ Activate menu: /disettings
 * Fixed problem with .ini.
 * Fixed bug with the choice of the element in dialogs 4 and 5 styles.
 
+### Version 8.0
+* Fixed bugs in dialogs 4 and 5 styles.
+* Fixed not valid characters.
+* Fixed size calculation provided.
+
 # Русский
 
 Данный скрипт меняет интерфейс диалога с DXUT на ImGui.
@@ -133,3 +138,9 @@ Activate menu: /disettings
 ### Версия 7.0
 * Исправлена проблема с .ini.
 * Исправлен баг с выбором элемента в диалогах 4 и 5 стиля.
+
+### Версия 8.0
+* Исправлены баги в диалогах 4 и 5 стиля.
+* Исправлены не валидные символы.
+* Исправлен подсчет размера диалога.
+* Настройки теперь на английском языке.
