@@ -1,5 +1,5 @@
 script_author('imring')
-script_version_number(7.0)
+script_version_number(8.0)
 local ffi = require 'ffi'
 local memory = require 'memory'
 local imgui = require 'imgui'
@@ -211,7 +211,7 @@ local function save_ini()
 	reload_ini()
 end
 
--- попытка фикса (работает ток при шрифте cour.ttf)
+-- fix attempt (current works when the font cour.ttf)
 local function replace_t(str)
 	while str:find('\t') do
 		local space = 8
@@ -390,6 +390,7 @@ function main()
 	reload_ini()
 
 	func_get_button = ffi.cast('char*(__thiscall *)(void* this, int a, int b)', sampGetBase() + 0x82C50)
+	
 	original = memory.getuint8(sampGetBase() + 0x6B240, true)
 	if imguistart.v then memory.setuint8(sampGetBase() + 0x6B240, 0xC3, true) end -- disable render dxut dialog
 
@@ -401,7 +402,10 @@ function main()
 		imgui.Process = sampIsDialogActive() or settings
 		if sampIsDialogActive() then
 			local b1, b2 = sampGetDialogButtons()
-			dialoginfo = { sampGetCurrentDialogId(), sampGetCurrentDialogType(), sampGetDialogCaption(), sampGetDialogText():gsub('\n\n', '\n \n'), b1, b2 }
+			dialoginfo = { sampGetCurrentDialogId(), sampGetCurrentDialogType(), sampGetDialogCaption(), sampGetDialogText(), b1, b2 }
+			if dialoginfo[2] == 0 or dialoginfo[2] == 1 or dialoginfo[2] == 3 then
+				while dialoginfo[4]:find('\n\n') do dialoginfo[4] = dialoginfo[4]:gsub('\n\n', '\n \n') end
+			end
 			list_dialog = sampGetCurrentDialogListItem()
 			input_dialog.v = u8(sampGetCurrentDialogEditboxText())
 			if last_id ~= dialoginfo[1] then
@@ -445,10 +449,16 @@ function onScriptTerminate(scr)
 	end
 end
 
+local glyph_ranges
 function imgui.BeforeDrawFrame()
 	if not fontChanged then
 		fontChanged = true
-		local glyph_ranges = imgui.GetIO().Fonts:GetGlyphRangesCyrillic()
+		if not glyph_ranges then
+			local builder = imgui.ImFontAtlasGlyphRangesBuilder()
+			builder:AddRanges(imgui.GetIO().Fonts:GetGlyphRangesCyrillic())
+			builder:AddRanges(imgui.ImGlyphRanges{0x2013, 0x2122, 0})
+			glyph_ranges = builder:BuildRanges()
+		end
 		imgui.GetIO().Fonts:Clear()
 		local path = getFolderPath(0x14) .. '\\' .. u8:decode(fontname.v)
 		if not doesFileExist(path) then path = getFolderPath(0x14) .. '\\arial.ttf' end
@@ -472,7 +482,6 @@ function imgui.OnDrawFrame()
 					i = i + 1
 					local l = 0
 					w = w:gsub('{%x%x%x%x%x%x}', '')
-					local size = imgui.CalcTextSize(u8(w))
 					for m in w:gmatch('[^\t]+') do
 						l = l + 1
 						if not columns[l] then columns[l] = 0 end
@@ -499,10 +508,11 @@ function imgui.OnDrawFrame()
 				if dialoginfo[2] == 1 or dialoginfo[2] == 3 then
 					maxheight = maxheight + style.ItemSpacing.y + imgui.GetFontSize() * 2 + 5
 				end
+				if maxheight < 150 then maxheight = maxheight * 1.1 end
 			end
 			maxheight = maxheight + style.ItemSpacing.y + imgui.GetFontSize()
 			-- maxheight = maxheight + style.ItemSpacing.y + ( imgui.GetFontSize() + 5 ) * 3 + 15
-			maxwidth = maxwidth + 8
+			maxwidth = maxwidth + 15
 			if maxwidth < 300 then maxwidth = 300 --[[elseif maxwidth > x / 1.2 then maxwidth = math.floor(x / 1.5)]] end
 			if maxheight < 100 then maxheight = 100 elseif maxheight > y / 1.1 then maxheight = math.floor(y / 1.1) end
 		end
@@ -539,7 +549,9 @@ function imgui.OnDrawFrame()
 			dialoginfo[8] = i
 		elseif dialoginfo[2] == 4 or dialoginfo[2] == 5 then
 			imgui.SetCursorPosY(imgui.GetCursorPosY() - 3)
-			local info = dialoginfo[4]:gsub('\t\t', '\t \t')
+			local info = dialoginfo[4]
+			while info:find('\t\t') do info = dialoginfo[4]:gsub('\t\t', '\t') end
+			info = info:gsub('\t$', '')
 			local a = info:match('^(.-)\n')
 			local _, c = a:gsub('\t', '')
 			if dialoginfo[2] == 5 then
@@ -549,7 +561,7 @@ function imgui.OnDrawFrame()
 				local i = 0
 				for w in a:gmatch('[^\t]+') do
 					i = i + 1
-					if i ~= c then imgui.SetColumnWidth(imgui.GetColumnIndex(), columns[i]) end
+					imgui.SetColumnWidth(imgui.GetColumnIndex(), columns[i])
 					imguiTextColoredRGB(w)
 					imgui.NextColumn()
 				end
@@ -622,12 +634,17 @@ function imgui.OnDrawFrame()
 		-- button
 		if sy == 150 then imgui.SetCursorPosY(sy - 30) end
 		local b1, b2 = dialoginfo[5]:gsub('{%x%x%x%x%x%x}', ''), dialoginfo[6]:gsub('{%x%x%x%x%x%x}', '')
-		local sb = imgui.CalcTextSize(u8(b1)).x
+		local sb = 0
+		if dialoginfo[5] and #dialoginfo[5] > 0 then
+			sb = sb + imgui.CalcTextSize(u8(b1)).x
+		end
 		if dialoginfo[6] and #dialoginfo[6] > 0 then
 			sb = sb + imgui.CalcTextSize('  ' .. u8(b2)).x
 		end
 		imgui.SetCursorPos(imgui.ImVec2((sw - sb) / 2 - 4, imgui.GetCursorPosY()))
-		if render_button(999, dialoginfo[5]) or dclist then run_button(true) end
+		if dialoginfo[5] and #dialoginfo[5] > 0 then
+			if render_button(999, dialoginfo[5]) or dclist then run_button(true) end
+		end
 		if dialoginfo[6] and #dialoginfo[6] > 0 then 
 			imgui.SameLine(nil, 7)
 			imgui.SetCursorPosY(imgui.GetCursorPosY() - 2)
@@ -655,34 +672,34 @@ function imgui.OnDrawFrame()
 		imgui.Indent(4)
 
 		-- info
-		if imgui.Checkbox(u8'Включить Dialog ImGui', imguistart) then
+		if imgui.Checkbox('Enable Dialog ImGui', imguistart) then
 			if imguistart.v then memory.setuint8(sampGetBase() + 0x6B240, 0xC3, true)
 			else memory.setuint8(sampGetBase() + 0x6B240, original, true) end
 		end
 		if imguistart.v then
-			imgui.Checkbox(u8'Возвращать стандарт. диалог при нажатие F8', screendialog)
-			imgui.Checkbox(u8'Включить сохранение элементов после закрытия', save)
-			imgui.Checkbox(u8'Включить показ раскладки', layoute)
+			imgui.Checkbox('Return the standard dialog when pressing F8', screendialog)
+			imgui.Checkbox('Enable item retention after closing', save)
+			imgui.Checkbox('Enable layout display', layoute)
 			local win = vec4_to_float4(colors[clr.WindowBg])
-			if imgui.ColorEdit4(u8'Цвет фона', win, imgui.ColorEditFlags.AlphaBar) then
+			if imgui.ColorEdit4('Color background', win, imgui.ColorEditFlags.AlphaBar) then
 				colors[clr.WindowBg] = float4_to_vec4(win)
 			end
 			local but = vec4_to_float4(colors[clr.Button])
-			if imgui.ColorEdit4(u8'Цвет кнопок', but, imgui.ColorEditFlags.AlphaBar) then
+			if imgui.ColorEdit4('Color button', but, imgui.ColorEditFlags.AlphaBar) then
 				colors[clr.Button] = float4_to_vec4(but)
 			end
 			local tit = vec4_to_float4(colors[clr.TitleBgActive])
-			if imgui.ColorEdit4(u8'Цвет заголовка', tit, imgui.ColorEditFlags.AlphaBar) then
+			if imgui.ColorEdit4('Color title', tit, imgui.ColorEditFlags.AlphaBar) then
 				colors[clr.TitleBgActive] = float4_to_vec4(tit)
 			end
 			local frame = vec4_to_float4(colors[clr.FrameBg])
-			if imgui.ColorEdit4(u8'Цвет выбранного элемента', frame, imgui.ColorEditFlags.AlphaBar) then
+			if imgui.ColorEdit4('Color selected element', frame, imgui.ColorEditFlags.AlphaBar) then
 				colors[clr.FrameBg] = float4_to_vec4(frame)
 			end
-			imgui.InputInt(u8'Размер шрифта', fontsize, 0)
-			imgui.InputText(u8'Название шрифта', fontname)
+			imgui.InputInt('Size font', fontsize, 0)
+			imgui.InputText('Name font', fontname)
 		end
-		if imgui.Button(u8('Применить')) then save_ini() end
+		if imgui.Button('Apply') then save_ini() end
 		imgui.Unindent(4)
 		imgui.PopStyleVar()
 		imgui.End()
